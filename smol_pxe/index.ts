@@ -1,6 +1,6 @@
 import { createAztecNode } from "@aztec/aztec-node";
 import { createSimulator } from "@aztec/simulator";
-import { createL2TipsStore } from "@aztec/kv-store/stores";
+import { createL2TipsStore } from "../kv-store/src/stores";
 import { SmolPXE } from "./note_listener";
 import { AztecAddress } from "@aztec/circuits.js";
 import { Fr } from '@aztec/foundation/fields';

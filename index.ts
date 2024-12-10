@@ -1,4 +1,3 @@
-import express from "express";
 import cors from "cors";
 import {
   CompleteAddress,
@@ -18,6 +17,7 @@ import { createDebugLogger, DebugLogger } from "@aztec/foundation/log";
 import { createPXEClient, PXE } from "@aztec/aztec.js";
 import { L2TipsStore } from "./kv-store/src/stores/l2_tips_store";
 import { toHex } from "viem";
+import express, { Request, Response } from "express";
 
 const app = express();
 app.use(express.json());
@@ -36,6 +36,8 @@ app.use(cors({ origin: "http://localhost:5173" }));
 const accountStorage = new Map<string, Point>();
 let noteListener: NoteListener | null = null;
 
+// Add this near the top with other global variables
+
 app.post("/registerAccount", async (req, res) => {
   const { address, ivpk_m } = req.body;
   console.log("Received data", {
@@ -43,7 +45,11 @@ app.post("/registerAccount", async (req, res) => {
     ivpk_m: ivpk_m.toString(),
   });
 
-  accountStorage.set(address.toString(), ivpk_m);
+  const normalizedAddress = address.toString().toLowerCase();
+
+  accountStorage.set(normalizedAddress, ivpk_m);
+
+  console.log("Request address length:", address.length);
 
   // Start listening for notes for this newly registered address
   await startNoteListening(address);
@@ -67,7 +73,11 @@ async function startNoteListening(address: string) {
 
 interface NoteRecord {
   owner: string;
-  note: string; // You might want to adjust this type based on your needs
+  noteHash: string;
+  contractAddress: string;
+  storageSlot: string;
+  noteType: string;
+  noteString: string;
   blockNumber: number;
 }
 
@@ -77,7 +87,8 @@ interface Database {
 }
 
 class InMemoryDB implements Database {
-  private notes: Map<string, NoteRecord[]> = new Map();
+  //make private
+  public notes: Map<string, NoteRecord[]> = new Map();
 
   storeNote(note: NoteRecord): void {
     const existingNotes = this.notes.get(note.owner) || [];
@@ -90,6 +101,7 @@ class InMemoryDB implements Database {
   }
 }
 
+const db = new InMemoryDB();
 class NoteListener {
   private pxe: PXE;
   private lastProcessedBlock: number = 0;
@@ -141,6 +153,9 @@ class NoteListener {
       if (this.processedNoteHashes.has(note.txHash.toString())) {
         continue;
       }
+
+      const blockNumber = await this.pxe.getBlockNumber();
+
       // Handle new note - e.g. log it, store it, trigger notifications etc.
       console.log("New note received:", {
         noteHash: note.txHash,
@@ -148,10 +163,30 @@ class NoteListener {
         storageSlot: note.storageSlot,
         noteType: note.noteTypeId,
         noteString: note.toString(),
+        blockNumber: blockNumber,
+        buffer: note.toBuffer().toString("hex"),
       });
 
+      //create a record of the note
+      // Create NoteRecord to store in db
+      const noteRecord: NoteRecord = {
+        owner: this.accountAddress.toString(),
+        noteHash: note.txHash.toString(),
+        contractAddress: note.contractAddress.toString(),
+        storageSlot: note.storageSlot.toString(),
+        noteType: note.noteTypeId.toString(),
+        noteString: note.toString(),
+        blockNumber: blockNumber ?? 0,
+      };
+
+      db.storeNote(noteRecord);
       // Track that we've processed this note
       this.processedNoteHashes.add(note.txHash.toString());
+
+      console.log(
+        "DB keys and their lengths:",
+        Array.from(db.notes.keys()).map((key) => [key, key.length])
+      );
 
       // Update last processed block if this note is from a later block
       // if (note. > this.lastProcessedBlock) {
@@ -170,8 +205,15 @@ app.get("/getAccountInfo/:address", (req, res) => {
   }
 });
 
-// New endpoint to get discovered notes for an address
-app.get("/getNotes/:address", (req, res) => {});
+// Update the existing route to handle POST requests
+app.post("/getNotes", (req: Request, res: Response) => {
+  const { address } = req.body; // Extract address from request body
+  const normalizedAddress = address.toString().toLowerCase();
+  console.log("Received address:", normalizedAddress);
+  const notes = db.getNotesByOwner(normalizedAddress);
+  console.log("Notes in request:", notes);
+  res.status(200).json({ notes });
+});
 
 // Start the server and initialize services
 const PORT = 3000;

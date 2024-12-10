@@ -1,4 +1,4 @@
-import { type AztecNode, type L2BlockNumber } from '@aztec/circuit-types';
+import { type AztecNode, type L2BlockNumber } from "@aztec/circuit-types";
 import {
   type AztecAddress,
   type Fr,
@@ -11,14 +11,17 @@ import {
   type VerificationKeyAsFields,
   computeContractClassIdPreimage,
   computeSaltedInitializationHash,
-} from '@aztec/circuits.js';
-import { createDebugLogger } from '@aztec/foundation/log';
-import { type Tuple } from '@aztec/foundation/serialize';
-import { type KeyStore } from '@aztec/key-store';
-import { getVKIndex, getVKSiblingPath } from '@aztec/noir-protocol-circuits-types';
+} from "@aztec/circuits.js";
+import { createDebugLogger } from "@aztec/foundation/log";
+import { type Tuple } from "@aztec/foundation/serialize";
+import { type KeyStore } from "@aztec/key-store";
+import {
+  getVKIndex,
+  getVKSiblingPath,
+} from "@aztec/noir-protocol-circuits-types";
 
-import { type ContractDataOracle } from '../contract_data_oracle/index.js';
-import { type ProvingDataOracle } from './../kernel_prover/proving_data_oracle.js';
+import { type ContractDataOracle } from "../contract_data_oracle/index.js";
+import { type ProvingDataOracle } from "../kernel_prover/proving_data_oracle.js";
 
 // TODO: Block number should not be "latest".
 // It should be fixed at the time the proof is being simulated. I.e., it should be the same as the value defined in the constant data.
@@ -30,8 +33,8 @@ export class KernelOracle implements ProvingDataOracle {
     private contractDataOracle: ContractDataOracle,
     private keyStore: KeyStore,
     private node: AztecNode,
-    private blockNumber: L2BlockNumber = 'latest',
-    private log = createDebugLogger('aztec:pxe:kernel_oracle'),
+    private blockNumber: L2BlockNumber = "latest",
+    private log = createDebugLogger("aztec:pxe:kernel_oracle")
   ) {}
 
   public async getContractAddressPreimage(address: AztecAddress) {
@@ -43,25 +46,44 @@ export class KernelOracle implements ProvingDataOracle {
   }
 
   public async getContractClassIdPreimage(contractClassId: Fr) {
-    const contractClass = await this.contractDataOracle.getContractClass(contractClassId);
+    const contractClass = await this.contractDataOracle.getContractClass(
+      contractClassId
+    );
     return computeContractClassIdPreimage(contractClass);
   }
 
-  public async getFunctionMembershipWitness(contractAddress: AztecAddress, selector: FunctionSelector) {
-    return await this.contractDataOracle.getFunctionMembershipWitness(contractAddress, selector);
+  public async getFunctionMembershipWitness(
+    contractAddress: AztecAddress,
+    selector: FunctionSelector
+  ) {
+    return await this.contractDataOracle.getFunctionMembershipWitness(
+      contractAddress,
+      selector
+    );
   }
 
   public getVkMembershipWitness(vk: VerificationKeyAsFields) {
     const leafIndex = getVKIndex(vk);
-    return Promise.resolve(new MembershipWitness(VK_TREE_HEIGHT, BigInt(leafIndex), getVKSiblingPath(leafIndex)));
+    return Promise.resolve(
+      new MembershipWitness(
+        VK_TREE_HEIGHT,
+        BigInt(leafIndex),
+        getVKSiblingPath(leafIndex)
+      )
+    );
   }
 
-  async getNoteHashMembershipWitness(leafIndex: bigint): Promise<MembershipWitness<typeof NOTE_HASH_TREE_HEIGHT>> {
-    const path = await this.node.getNoteHashSiblingPath(this.blockNumber, leafIndex);
+  async getNoteHashMembershipWitness(
+    leafIndex: bigint
+  ): Promise<MembershipWitness<typeof NOTE_HASH_TREE_HEIGHT>> {
+    const path = await this.node.getNoteHashSiblingPath(
+      this.blockNumber,
+      leafIndex
+    );
     return new MembershipWitness<typeof NOTE_HASH_TREE_HEIGHT>(
       path.pathSize,
       leafIndex,
-      path.toFields() as Tuple<Fr, typeof NOTE_HASH_TREE_HEIGHT>,
+      path.toFields() as Tuple<Fr, typeof NOTE_HASH_TREE_HEIGHT>
     );
   }
 
@@ -78,7 +100,13 @@ export class KernelOracle implements ProvingDataOracle {
     return this.keyStore.getMasterSecretKey(masterPublicKey);
   }
 
-  public getDebugFunctionName(contractAddress: AztecAddress, selector: FunctionSelector): Promise<string> {
-    return this.contractDataOracle.getDebugFunctionName(contractAddress, selector);
+  public getDebugFunctionName(
+    contractAddress: AztecAddress,
+    selector: FunctionSelector
+  ): Promise<string> {
+    return this.contractDataOracle.getDebugFunctionName(
+      contractAddress,
+      selector
+    );
   }
 }

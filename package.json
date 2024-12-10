@@ -6,8 +6,6 @@
     "@aztec/accounts": "0.65.2",
     "@aztec/aztec.js": "0.65.2",
     "@aztec/foundation": "0.65.2",
-    "@aztec/kv-store": "0.65.2",
-    "@aztec/simulator": "0.65.2",
     "@jest/globals": "^29.5.0",
     "@noble/curves": "^1.0.0",
     "@swc/core": "^1.4.11",
