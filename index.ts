@@ -1,113 +1,75 @@
 import cors from "cors";
-import {
-  CompleteAddress,
-  Point,
-  AztecAddress,
-  Fr,
-  INITIAL_L2_BLOCK_NUM,
-} from "@aztec/circuits.js";
-import {
-  type AztecNode,
-  IncomingNotesFilter,
-  L2BlockStream,
-  type L2BlockStreamEvent,
-  type L2BlockStreamEventHandler,
-} from "@aztec/circuit-types";
-import { createDebugLogger, DebugLogger } from "@aztec/foundation/log";
-import { createPXEClient, PXE } from "@aztec/aztec.js";
-import { L2TipsStore } from "./kv-store/src/stores/l2_tips_store";
-import { toHex } from "viem";
+import { AztecAddress, Point, Fr } from "@aztec/circuits.js";
+import { UniqueNote, PXE, createPXEClient } from "@aztec/aztec.js";
 import express, { Request, Response } from "express";
 
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: "http://localhost:5173" }));
 
-// const client = await createAndStartTelemetryClient(getTelemetryClientConfig());
-// const node = await createAztecNode(aztecNodeConfig, Client);
-// const pxe = new createAztecPXE(node);
-
-//think about what really needs to be done.
-//the aztec node is already running. Find out how the PXE listens to the node.
-
-//logic starts here
-
-// Storage for accounts and their viewing keys
+// Storage for registered accounts
 const accountStorage = new Map<string, Point>();
-let noteListener: NoteListener | null = null;
 
-// Add this near the top with other global variables
+// In-memory database for storing notes
+class InMemoryDB {
+  private notes: Map<string, NoteStore[]> = new Map();
 
-app.post("/registerAccount", async (req, res) => {
-  const { address, ivpk_m } = req.body;
-  console.log("Received data", {
-    address: address.toString(),
-    ivpk_m: ivpk_m.toString(),
-  });
-
-  const normalizedAddress = address.toString().toLowerCase();
-
-  accountStorage.set(normalizedAddress, ivpk_m);
-
-  console.log("Request address length:", address.length);
-
-  // Start listening for notes for this newly registered address
-  await startNoteListening(address);
-
-  res.status(200).send("Account registered for note discovery");
-});
-
-// Helper function to start note listening
-async function startNoteListening(address: string) {
-  // Stop existing listener if any
-  if (noteListener) {
-    noteListener.stop();
-  }
-
-  const pxeUrl = "http://localhost:8080";
-  const accountAddress = AztecAddress.fromString(address);
-
-  noteListener = new NoteListener(pxeUrl, accountAddress);
-  await noteListener.start();
-}
-
-interface NoteRecord {
-  owner: string;
-  noteHash: string;
-  contractAddress: string;
-  storageSlot: string;
-  noteType: string;
-  noteString: string;
-  blockNumber: number;
-}
-
-interface Database {
-  storeNote(note: NoteRecord): void;
-  getNotesByOwner(owner: string): NoteRecord[];
-}
-
-class InMemoryDB implements Database {
-  //make private
-  public notes: Map<string, NoteRecord[]> = new Map();
-
-  storeNote(note: NoteRecord): void {
+  public storeNote(note: NoteStore): void {
     const existingNotes = this.notes.get(note.owner) || [];
     existingNotes.push(note);
     this.notes.set(note.owner, existingNotes);
   }
 
-  getNotesByOwner(owner: string): NoteRecord[] {
+  public getNotesByOwner(owner: string): NoteStore[] {
     return this.notes.get(owner) || [];
+  }
+
+  public clearNotes(owner: string): void {
+    this.notes.delete(owner);
   }
 }
 
 const db = new InMemoryDB();
+
+// Interfaces for notes
+interface NoteStore {
+  owner: string;
+  note: UniqueNote;
+  blockNumber: number;
+}
+
+interface PlainNote {
+  contractAddress: string;
+  storageSlot: string;
+  noteTypeId: string;
+  txHash: string;
+  nonce: string;
+  items: string[];
+}
+
+interface NoteRecord {
+  owner: string;
+  note: PlainNote;
+  blockNumber: number;
+}
+
+// Helper function to convert a UniqueNote to a plain JSON-friendly object
+function convertUniqueNoteToPlainObject(uniqueNote: UniqueNote): PlainNote {
+  return {
+    contractAddress: uniqueNote.contractAddress.toString(),
+    storageSlot: uniqueNote.storageSlot.toString(),
+    noteTypeId: uniqueNote.noteTypeId.toString(),
+    txHash: uniqueNote.txHash.toString(),
+    nonce: uniqueNote.nonce.toString(),
+    items: uniqueNote.note?.items.map((item) => item.toString()) || [], // Ensure items is serialized as an array
+  };
+}
+
+// NoteListener Class
 class NoteListener {
   private pxe: PXE;
-  private lastProcessedBlock: number = 0;
   private isRunning: boolean = false;
-  private processedNoteHashes: Set<string> = new Set(); //track processed notes
-  // private log: DebugLogger;
+  private processedNoteHashes: Set<string> = new Set();
 
   constructor(
     private readonly pxeUrl: string,
@@ -139,87 +101,70 @@ class NoteListener {
   }
 
   private async checkForNewNotes() {
-    // Create filter for notes after our last processed block
-    const filter: IncomingNotesFilter = {
-      owner: this.accountAddress,
-    };
+    const filter = { owner: this.accountAddress };
 
-    // Query for new notes
     const newNotes = await this.pxe.getIncomingNotes(filter);
 
-    // Process new notes
     for (const note of newNotes) {
-      // Skip if we've already processed this note
-      if (this.processedNoteHashes.has(note.txHash.toString())) {
-        continue;
-      }
+      if (this.processedNoteHashes.has(note.txHash.toString())) continue;
 
       const blockNumber = await this.pxe.getBlockNumber();
-
-      // Handle new note - e.g. log it, store it, trigger notifications etc.
-      console.log("New note received:", {
-        noteHash: note.txHash,
-        contractAddress: note.contractAddress,
-        storageSlot: note.storageSlot,
-        noteType: note.noteTypeId,
-        noteString: note.toString(),
-        blockNumber: blockNumber,
-        buffer: note.toBuffer().toString("hex"),
-      });
-
-      //create a record of the note
-      // Create NoteRecord to store in db
-      const noteRecord: NoteRecord = {
+      const noteRecord: NoteStore = {
         owner: this.accountAddress.toString(),
-        noteHash: note.txHash.toString(),
-        contractAddress: note.contractAddress.toString(),
-        storageSlot: note.storageSlot.toString(),
-        noteType: note.noteTypeId.toString(),
-        noteString: note.toString(),
+        note,
         blockNumber: blockNumber ?? 0,
       };
 
       db.storeNote(noteRecord);
-      // Track that we've processed this note
       this.processedNoteHashes.add(note.txHash.toString());
-
-      console.log(
-        "DB keys and their lengths:",
-        Array.from(db.notes.keys()).map((key) => [key, key.length])
-      );
-
-      // Update last processed block if this note is from a later block
-      // if (note. > this.lastProcessedBlock) {
-      //   this.lastProcessedBlock = note.blockNumber;
-      // }
     }
   }
 }
 
-app.get("/getAccountInfo/:address", (req, res) => {
-  const ivpk_m = accountStorage.get(req.params.address);
-  if (!ivpk_m) {
-    res.status(404).send("Account not found");
-  } else {
-    res.status(200).json({ ivpk_m });
-  }
+// Route to register an account
+app.post("/registerAccount", async (req, res) => {
+  const { address, ivpk_m } = req.body;
+  const normalizedAddress = address.toLowerCase();
+
+  accountStorage.set(normalizedAddress, ivpk_m);
+  console.log(`Registered account: ${normalizedAddress}`);
+
+  const pxeUrl = "http://localhost:8080";
+  const accountAddress = AztecAddress.fromString(address);
+
+  const noteListener = new NoteListener(pxeUrl, accountAddress);
+  noteListener.start();
+
+  res.status(200).send("Account registered and listening for notes.");
 });
 
-// Update the existing route to handle POST requests
+// Route to fetch raw and processed notes
 app.post("/getNotes", (req: Request, res: Response) => {
-  const { address } = req.body; // Extract address from request body
-  const normalizedAddress = address.toString().toLowerCase();
-  console.log("Received address:", normalizedAddress);
-  const notes = db.getNotesByOwner(normalizedAddress);
-  console.log("Notes in request:", notes);
-  res.status(200).json({ notes });
+  const { address } = req.body;
+  const normalizedAddress = address.toLowerCase();
+
+  const rawNotes = db.getNotesByOwner(normalizedAddress);
+
+  const processedNotes = rawNotes.map((note) => ({
+    owner: note.owner,
+    blockNumber: note.blockNumber,
+    note: convertUniqueNoteToPlainObject(note.note),
+  }));
+
+  res.status(200).json(processedNotes);
 });
 
-// Start the server and initialize services
-const PORT = 3000;
-const AZTEC_NODE_URL = "http://localhost:8079"; // Default Aztec sandbox URL
+// Route to clear notes for an owner
+app.post("/clearNotes", (req: Request, res: Response) => {
+  const { address } = req.body;
+  const normalizedAddress = address.toLowerCase();
 
-app.listen(PORT, async () => {
+  db.clearNotes(normalizedAddress);
+  res.status(200).send(`Cleared notes for owner: ${normalizedAddress}`);
+});
+
+// Start server
+const PORT = 3000;
+app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
-  console.log("Note discovery service initialized");
 });
