@@ -1922,6 +1922,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/ws@npm:^8.5.13":
+  version: 8.5.13
+  resolution: "@types/ws@npm:8.5.13"
+  dependencies:
+    "@types/node": "npm:*"
+  checksum: 10c0/a5430aa479bde588e69cb9175518d72f9338b6999e3b2ae16fc03d3bdcff8347e486dc031e4ed14601260463c07e1f9a0d7511dfc653712b047c439c680b0b34
+  languageName: node
+  linkType: hard
+
 "@types/yargs-parser@npm:*":
   version: 21.0.3
   resolution: "@types/yargs-parser@npm:21.0.3"
@@ -6471,6 +6480,7 @@ __metadata:
   dependencies:
     "@aztec/accounts": "npm:0.65.2"
     "@aztec/aztec.js": "npm:0.65.2"
+    "@aztec/foundation": "npm:0.65.2"
     "@jest/globals": "npm:^29.5.0"
     "@noble/curves": "npm:^1.0.0"
     "@swc/core": "npm:^1.4.11"
@@ -6483,6 +6493,7 @@ __metadata:
     "@types/lodash.every": "npm:^4.6.7"
     "@types/memdown": "npm:^3.0.3"
     "@types/node": "npm:^18.7.23"
+    "@types/ws": "npm:^8.5.13"
     "@viem/anvil": "npm:^0.0.9"
     buffer: "npm:^6.0.3"
     cors: "npm:^2.8.5"
@@ -6517,6 +6528,7 @@ __metadata:
     webpack: "npm:^5.88.2"
     webpack-cli: "npm:^5.1.4"
     winston: "npm:^3.10.0"
+    ws: "npm:^8.18.0"
     zod: "npm:^3.23.8"
   languageName: unknown
   linkType: soft

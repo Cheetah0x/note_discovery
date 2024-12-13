@@ -2,10 +2,41 @@ import cors from "cors";
 import { AztecAddress, Point, Fr } from "@aztec/circuits.js";
 import { UniqueNote, PXE, createPXEClient } from "@aztec/aztec.js";
 import express, { Request, Response } from "express";
+import WebSocket, { WebSocketServer } from "ws";
+import { EventEmitter } from "events";
 
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: "http://localhost:5173" }));
+
+interface NotificationSubscriber {
+  address: string;
+  socket: WebSocket;
+}
+
+// Interfaces for notes
+interface NoteStore {
+  owner: string;
+  note: UniqueNote;
+  blockNumber: number;
+}
+
+interface PlainNote {
+  contractAddress: string;
+  storageSlot: string;
+  noteTypeId: string;
+  txHash: string;
+  nonce: string;
+  items: string[];
+}
+
+interface NoteRecord {
+  owner: string;
+  note: PlainNote;
+  blockNumber: number;
+}
+
+//TODO: Figure out auth to ensure people can only access their account
 
 // Storage for registered accounts
 const accountStorage = new Map<string, Point>();
@@ -31,28 +62,6 @@ class InMemoryDB {
 
 const db = new InMemoryDB();
 
-// Interfaces for notes
-interface NoteStore {
-  owner: string;
-  note: UniqueNote;
-  blockNumber: number;
-}
-
-interface PlainNote {
-  contractAddress: string;
-  storageSlot: string;
-  noteTypeId: string;
-  txHash: string;
-  nonce: string;
-  items: string[];
-}
-
-interface NoteRecord {
-  owner: string;
-  note: PlainNote;
-  blockNumber: number;
-}
-
 // Helper function to convert a UniqueNote to a plain JSON-friendly object
 function convertUniqueNoteToPlainObject(uniqueNote: UniqueNote): PlainNote {
   return {
@@ -64,6 +73,32 @@ function convertUniqueNoteToPlainObject(uniqueNote: UniqueNote): PlainNote {
     items: uniqueNote.note?.items.map((item) => item.toString()) || [], // Ensure items is serialized as an array
   };
 }
+
+class NotificationManager {
+  private subscribers: Map<string, WebSocket> = new Map();
+
+  public subscribe(address: string, socket: WebSocket): void {
+    this.subscribers.set(address, socket);
+  }
+
+  public unsubscribe(address: string): void {
+    this.subscribers.delete(address);
+  }
+
+  public notify(address: string, note: NoteRecord): void {
+    const socket = this.subscribers.get(address);
+    if (socket) {
+      socket.send(
+        JSON.stringify({
+          type: "NEW_NOTE",
+          data: note,
+        })
+      );
+    }
+  }
+}
+
+const notificationManager = new NotificationManager();
 
 // NoteListener Class
 class NoteListener {
@@ -102,7 +137,6 @@ class NoteListener {
 
   private async checkForNewNotes() {
     const filter = { owner: this.accountAddress };
-
     const newNotes = await this.pxe.getIncomingNotes(filter);
 
     for (const note of newNotes) {
@@ -117,6 +151,15 @@ class NoteListener {
 
       db.storeNote(noteRecord);
       this.processedNoteHashes.add(note.txHash.toString());
+
+      //send notifcation for new note
+      const processedNote: NoteRecord = {
+        owner: noteRecord.owner,
+        note: convertUniqueNoteToPlainObject(noteRecord.note),
+        blockNumber: noteRecord.blockNumber,
+      };
+
+      notificationManager.notify(noteRecord.owner, processedNote);
     }
   }
 }
@@ -161,6 +204,26 @@ app.post("/clearNotes", (req: Request, res: Response) => {
 
   db.clearNotes(normalizedAddress);
   res.status(200).send(`Cleared notes for owner: ${normalizedAddress}`);
+});
+
+const wss = new WebSocketServer({ port: 8081 });
+
+wss.on("connection", (ws) => {
+  ws.on("message", (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      if (data.type === "SUBSCRIBE") {
+        notificationManager.subscribe(data.address, ws);
+      }
+    } catch (error) {
+      console.error("WebSocket message error:", error);
+    }
+  });
+
+  ws.on("close", () => {
+    // Clean up subscribers when connection closes
+    //figure out how to clean up subscribers
+  });
 });
 
 // Start server
